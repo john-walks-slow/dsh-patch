@@ -1,0 +1,40 @@
+--- a/node_modules/@deepseek-ai/dsh-host-apiproxy/lib/index.js
++++ b/node_modules/@deepseek-ai/dsh-host-apiproxy/lib/index.js
+@@ -1385,9 +1385,35 @@
+ /** Render one detached history page through the same presenter path as ordinary history. */
+ function historyPage(ctx, events, beforeSeq, maxMessages, scope) {
+ 	const page = paginate(events, beforeSeq, maxMessages ?? DEFAULT_MAX_MESSAGES);
++	/* deployment patch: drop redundant streaming chunks from history responses.
++	assistant/chunk events are token-by-token streaming telemetry; the final
++	assistant/message event (same turn:step) already carries the assembled
++	content the client renders (its fold branch sets `blocks` from
++	data.message.content, self-sufficient). In long sessions chunks dominate
++	the payload (>80%) and choke cold loads over the network. Drop chunks ONLY
++	for steps that have a finalizing assistant/message in this page — incomplete
++	tail steps (no assistant/message, e.g. an interrupted stream) keep their
++	chunks so partial content still renders. hasMore is unaffected (paginate's
++	cut is independent of chunk filtering). To also drop request/header (~9%,
++	raw API request snapshots the conversation view does not render), add
++	`|| t === "request/header"` to the filter below after verifying no debug
++	panel depends on it. */
++	const completeSteps = /* @__PURE__ */ new Set();
++	for (const entry of page.events) {
++		const e = entry;
++		if (e.type === "assistant/message" && e.data && Number.isInteger(e.data.turn) && Number.isInteger(e.data.step)) {
++			completeSteps.add(e.data.turn + ":" + e.data.step);
++		}
++	}
++	const filtered = page.events.filter((entry) => {
++		const e = entry;
++		if (e.type !== "assistant/chunk") return true;
++		if (!e.data || !Number.isInteger(e.data.turn) || !Number.isInteger(e.data.step)) return true;
++		return !completeSteps.has(e.data.turn + ":" + e.data.step);
++	});
+ 	return {
+-		events: page.events.map((event) => {
+-			const view = viewFor(ctx, event, (callId) => backscanArgs(page.events, callId), scope);
++		events: filtered.map((event) => {
++			const view = viewFor(ctx, event, (callId) => backscanArgs(filtered, callId), scope);
+ 			return {
+ 				event,
+ 				...view === void 0 ? {} : { view }

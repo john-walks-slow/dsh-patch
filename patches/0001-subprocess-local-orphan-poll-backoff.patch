@@ -1,0 +1,18 @@
+--- a/node_modules/@deepseek-ai/dsh-subprocess-local/lib/index.js
++++ b/node_modules/@deepseek-ai/dsh-subprocess-local/lib/index.js
+@@ -848,7 +848,14 @@
+ 	*/
+ 	const observeTreeExit = () => {
+ 		treeExitObservation ??= (async () => {
+-			while (treeAlive()) await sleepTick();
++			/* deployment patch: orphan-poll backoff. The original 15ms cadence turns a
++		settled child's surviving orphan group (e.g. a detached dev server whose
++		launcher exited) into a permanent full-/proc stat scan that pegs the event
++		loop ~470ms every tick. Once the main child has settled, only orphan members
++		remain to reap, so poll far less often. Correctness is unchanged: a group that
++		truly exits is still detected (a few seconds later) and the grace-timer
++		escalation (SIGTERM->SIGKILL) is unaffected. */
++		while (treeAlive()) await (settled ? setTimeout$1(5000) : sleepTick());
+ 			treeExitObserved = true;
+ 			if (graceTimer !== void 0) clearTimeout(graceTimer);
+ 			graceTimer = void 0;
