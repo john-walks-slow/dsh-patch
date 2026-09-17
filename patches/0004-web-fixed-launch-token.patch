@@ -1,0 +1,15 @@
+--- a/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js
++++ b/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js
+@@ -217,7 +217,11 @@
+ function processLaunchToken(owner) {
+ 	const existing = PROCESS_LAUNCH_TOKENS.get(owner);
+ 	if (existing !== void 0) return existing;
+-	const created = encodeBase64Url(randomBytes(SECRET_BYTES));
++	/* deployment patch: fixed launch token. DSH_TOKEN pins the URL ?token=
++	   value across restarts so a bookmarked URL keeps working; without it a
++	   fresh random token is minted per process (the upstream behavior). */
++	const pinned = process.env.DSH_TOKEN;
++	const created = pinned !== void 0 && pinned !== "" ? pinned : encodeBase64Url(randomBytes(SECRET_BYTES));
+ 	PROCESS_LAUNCH_TOKENS.set(owner, created);
+ 	return created;
+ }

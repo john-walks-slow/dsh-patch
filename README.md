@@ -82,6 +82,25 @@ complete frame contains a torn JSONL record」。2026-09-15 ~ 09-17 连续 4 例
 > `docs/issues/260917-b91c-end-seed-seq-collision/`、`docs/issues/260917-batch-seq-collision/`；
 > 数据修复流程 skill：`~/.claude/skills/repair-dsh-session-log/`。
 
+### 0004-web-fixed-launch-token.patch
+
+**症状**：`dsh web` 每次重启随机生成 URL `?token=`，书签/快捷方式在重启后失效
+（401 authentication required）。
+
+**根因**：`dsh-client-connection` 的 `processLaunchToken` 每进程用
+`randomBytes(32)` 现铸 token，进程生命周期外无任何稳定凭据入口。
+
+**修复**：`processLaunchToken` 先读环境变量 `DSH_TOKEN`——非空则固定使用该值
+（URL、`?token=` 交换均生效）；未设置或为空时维持上游随机行为，零侵入。
+校验侧 `tokenMatches` 本就是 timing-safe 任意字符串比较，无 base64 约束。
+
+**用法**：supervisor 配置 `environment=...,DSH_TOKEN="<your-token>"` 后重启 dsh，
+浏览器固定访问 `https://<host>/?token=<your-token>`（首次访问铸 cookie，之后无需
+再带 token）。
+
+**安全提示**：固定 token 意味着它不再是"重启即轮换"的进程级秘密——强度完全
+取决于所选值。请只配合受信传输（`--trusted-host` / 隧道）使用。
+
 ## 用法
 
 ```bash
