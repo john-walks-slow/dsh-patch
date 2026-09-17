@@ -10,7 +10,7 @@ if command -v dsh >/dev/null 2>&1; then
 else
 	DROOT="/usr/lib/node_modules/@deepseek-ai/dsh"
 fi
-if [ ! -d "$DROOT/node_modules/@deepseek-ai/dsh-host-apiproxy" ]; then
+if [ ! -d "$DROOT/node_modules/@deepseek-ai/dsh-session-persistence-jsonl" ]; then
 	echo "✗ dsh install root not found at $DROOT" >&2
 	exit 1
 fi

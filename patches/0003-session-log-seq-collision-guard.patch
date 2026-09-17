@@ -1,0 +1,118 @@
+--- a/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
++++ b/node_modules/@deepseek-ai/dsh-session-persistence-jsonl/lib/index.js
+@@ -1,5 +1,5 @@
+ import z from "@deepseek-ai/schemastery";
+-import { readdirSync } from "node:fs";
++import { closeSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
+ import { link, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, truncate } from "node:fs/promises";
+ import { dirname, join, parse, resolve, toNamespacedPath } from "node:path";
+ import { performance } from "node:perf_hooks";
+@@ -1038,7 +1038,10 @@
+ 			}
+ 			signal?.throwIfAborted();
+ 			const complete = scanner.checkpoint();
+-			if (complete.committedBytes !== complete.inputBytes) throw new Error("corrupt Zstandard session log: complete frame contains a torn JSONL record");
++			if (complete.committedBytes !== complete.inputBytes) {
++				if (scanner.issue !== void 0) throw scanner.issue;
++				throw new Error("corrupt Zstandard session log: complete frame contains a torn JSONL record");
++			}
+ 			if (tornStart === void 0) {
+ 				const prefix = scanner.finish();
+ 				return {
+@@ -1248,6 +1251,88 @@
+ 		const body = eventLines(events, this.packChunks) + "\n";
+ 		return this.compression === "zstd" ? compressZstdFrame(body) : body;
+ 	}
++	/**
++	 * First sequence number covered by one stored record: packed rows carry
++	 * `seq0` (the run's first event), plain events carry `seq`.
++	 */
++	recordStartSeq(record) {
++		if ("seq0" in record) return record.seq0;
++		return record.seq;
++	}
++	/**
++	 * Reject a batch that would overlap sequence numbers already stored in the
++	 * log: append-only logs must never carry two events for one seq. A stale
++	 * writer (interrupted/resumed session driven from a second lifecycle)
++	 * would otherwise durably fork the history (see dsh-patch 0003).
++	 */
++	assertNoSeqOverlap(path, events) {
++		const head = events[0];
++		if (head === void 0) return;
++		const batchStart = this.recordStartSeq(head);
++		let lastRecord;
++		try {
++			lastRecord = this.readLastStoredRecord(path);
++		} catch (error) {
++			if (!isENOENT(error)) throw error;
++			return;
++		}
++		if (lastRecord === void 0) return;
++		const storedEnd = this.recordStartSeq(lastRecord) + this.storedRecordEventCount(lastRecord) - 1;
++		if (batchStart <= storedEnd) throw new Error(`corrupt session log: refusing append to "${path}" overlapping stored sequence numbers (batch starts at ${batchStart}, stored events end at ${storedEnd})`);
++	}
++	/**
++	 * Last stored record of a log, or undefined for a header-only/empty log.
++	 * zstd scans frame boundaries (magic walking) and decodes only the final
++	 * complete frame; plain logs read the tail bytes.
++	 */
++	readLastStoredRecord(path) {
++		const buffer = readFileSync(path);
++		if (this.compression === "zstd") {
++			let offset = 0;
++			let lastStart;
++			let lastEnd;
++			while (offset < buffer.length) {
++				if (buffer.length - offset < 4 || buffer.readUInt32LE(offset) !== ZSTD_MAGIC) throw new Error(`corrupt Zstandard session log: invalid frame magic at byte ${offset}`);
++				const { frames, tornStart } = scanZstdFrames(buffer.subarray(offset), 1);
++				if (tornStart !== void 0 || frames.length === 0) break;
++				lastStart = offset;
++				lastEnd = offset + frames[0].end;
++				offset = lastEnd;
++			}
++			if (lastStart === void 0) return void 0;
++			const plaintext = zstdDecompressSync(buffer.subarray(lastStart, lastEnd)).toString("utf8");
++			return this.parseLastRecord(plaintext);
++		}
++		const { size } = statSync(path);
++		const tail = Buffer.alloc(Math.min(size, 65536));
++		const handle = openSync(path, "r");
++		try {
++			readSync(handle, tail, 0, tail.length, Math.max(0, size - tail.length));
++		} finally {
++			closeSync(handle);
++		}
++		return this.parseLastRecord(tail.toString("utf8"));
++	}
++	/** Parse the final non-empty JSONL record of a plaintext blob; skip the header row. */
++	parseLastRecord(plaintext) {
++		const records = plaintext.split("\n");
++		for (let i = records.length - 1; i >= 0; i--) {
++			if (records[i] === "") continue;
++			const record = JSON.parse(records[i]);
++			if ("seq" in record || "seq0" in record) return record;
++			return void 0;
++		}
++		return void 0;
++	}
++	/** Number of logical events inside one stored record (packed rows > 1). */
++	storedRecordEventCount(record) {
++		if ("seq0" in record) {
++			const run = record.data?.texts ?? record.data?.args;
++			if (Array.isArray(run)) return run.length;
++			return 1;
++		}
++		return 1;
++	}
+ 	/** fsync a POSIX directory so a just-created/renamed entry is crash-durable. */
+ 	/* v8 ignore start -- Windows uses write-through namespace operations; POSIX coverage exercises directory fsync. */
+ 	async syncDirPosix(dir) {
+@@ -1267,6 +1352,7 @@
+ 	async appendLines(meta, events) {
+ 		const content = await this.encodeEventBatch(events);
+ 		const path = logPath(this.root, meta.cwd, meta.id, this.compression);
++		this.assertNoSeqOverlap(path, events);
+ 		const handle = await open(path, "a");
+ 		let closed = false;
+ 		const closeAppendHandle = async () => {

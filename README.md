@@ -28,7 +28,7 @@ escalation 不受影响。
 **规避**：长驻后台进程（dev server / tunnel / 守护进程）用 supervisord 托管，别用
 dsh bash 工具前台启动。
 
-### 0002-apiproxy-history-chunk-filter.patch
+### ~~0002-apiproxy-history-chunk-filter.patch~~（已被上游吸收，归档）
 
 **症状**：dsh 会话首次加载慢——`session.history` 响应一个长会话能到 5.9MB。
 
@@ -45,7 +45,42 @@ dsh bash 工具前台启动。
 
 **实测**：payload 5.38MB → 0.96MB（-82%），事件数 27439 → 248，客户端 fold -99%。
 
+**结局**（2026-09-17）：dsh 0.1.2-rc.1 重构了 `dsh-host-apiproxy`（包已不存在），历史
+分页迁至 `dsh-api-session-controller` 并引入 `chunkrow/*` 紧凑行打包（`pageRecords` →
+`packChunkRuns`），等效实现了本补丁的 payload 缩减目标。补丁归档至
+`patches/absorbed-upstream/`，不再参与 apply.sh。
+
 > 诊断文档：`dsh-im-humanize/docs/issues/260909-dsh-web-slow-listing/`。
+
+### 0003-session-log-seq-collision-guard.patch
+
+**症状**：GUI 打开会话报「历史加载失败：corrupt session log: seq gap in committed
+region at line N (expected X, got Y)」或误导性的「corrupt Zstandard session log:
+complete frame contains a torn JSONL record」。2026-09-15 ~ 09-17 连续 4 例（260915、
+260917-b91c、260917-batch 三例）。
+
+**根因**（详见各 issue 文档）：同一 session id 被两条互不知情的写入生命周期驱动——
+打断/恢复路径按存储态追加 `session/end-seed` 世代标记或合成 closers，持陈旧内存游标
+的存活写入方（同进程或跨进程）随后继续 append，seq 重复对撞落盘。持久化层 append-only
+且无跨写入方 seq 冲突检测。
+
+**修复**（`dsh-session-persistence-jsonl` 两处）：
+
+1. **对撞守卫**（主防线）：`appendLines` 写盘前 `assertNoSeqOverlap` —— 读盘上最后
+   一条 record（zstd 走 `scanZstdFrames` 帧边界扫描仅解码末帧；plain 读尾部 64KB），
+   批首事件 seq（打包行取 `seq0`）若 ≤ 已存末事件 seq（打包行 + `texts/args.length`）
+   则**拒绝写入**并抛错。陈旧写入方从此无法把分歧历史落盘。
+2. **误报修复**（诊断体验）：`readZstdPrefix` 在 `committedBytes !== inputBytes` 时
+   优先抛 `scanner.issue`（真实成因，如 "seq gap in committed region …"），
+   仅在其为空时才报 torn record——「torn JSONL record」不再掩盖 seq 对撞。
+
+**取舍**：守卫按批检查（非逐事件），帧扫描实测最大日志（2.4MB / 8000 帧）~30ms 一次性
+开销，每批一次，可忽略。拒绝写入抛错而非静默丢弃——上游代码将 batch 保留在内存中，
+持有最新游标的写入方仍能正常落盘；陈旧方拿到的报错会显式暴露对撞。
+
+> 诊断文档：`docs/issues/260915-zstd-session-log-seq-collision/`、
+> `docs/issues/260917-b91c-end-seed-seq-collision/`、`docs/issues/260917-batch-seq-collision/`；
+> 数据修复流程 skill：`~/.claude/skills/repair-dsh-session-log/`。
 
 ## 用法
 
