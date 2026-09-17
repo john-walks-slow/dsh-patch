@@ -1,0 +1,27 @@
+--- a/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js
++++ b/node_modules/@deepseek-ai/dsh-client-connection/lib/index.js
+@@ -421,11 +421,23 @@
+ 		return payload.issuedAt <= now && payload.expiresAt > now && payload.expiresAt > payload.issuedAt && payload.expiresAt - payload.issuedAt <= this.maxAgeMilliseconds;
+ 	}
+ 	writeUnauthorized(req, res) {
++		/* deployment patch: token entry form on the 401 page. Upstream only says
++		   "reopen the URL printed by dsh web", which is useless once the URL is
++		   lost (restart, new device). A minimal input + button redirects to
++		   /?token=<input>, reusing the standard token->cookie exchange. */
++		if (req.method !== "HEAD") {
++			res.writeHead(401, {
++				"cache-control": "no-store",
++				"content-type": "text/html; charset=utf-8"
++			});
++			res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>DSH — authentication required</title><style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#111;color:#eee}main{text-align:center}form{display:flex;gap:8px;margin:16px 0}input{background:#222;color:#eee;border:1px solid #444;border-radius:6px;padding:8px 12px;font-size:14px;min-width:260px}button{background:#3b82f6;color:#fff;border:0;border-radius:6px;padding:8px 16px;font-size:14px;cursor:pointer}button:hover{background:#2563eb}p{opacity:.6;font-size:13px}</style></head><body><main><h1>DSH</h1><form onsubmit="location.href=\'/?token=\'+encodeURIComponent(document.getElementById(\'token\').value);return false"><input id="token" type="password" placeholder="session token" autofocus autocomplete="off"><button type="submit">Sign in</button></form><p>dsh web authentication required</p></main></body></html>');
++			return;
++		}
+ 		res.writeHead(401, {
+ 			"cache-control": "no-store",
+ 			"content-type": "text/plain; charset=utf-8"
+ 		});
+-		res.end(req.method === "HEAD" ? void 0 : "dsh web authentication required; reopen the URL printed by dsh web.\n");
++		res.end("dsh web authentication required; reopen the URL printed by dsh web.\n");
+ 	}
+ };
+ //#endregion

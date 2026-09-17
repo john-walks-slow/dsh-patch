@@ -101,6 +101,20 @@ complete frame contains a torn JSONL record」。2026-09-15 ~ 09-17 连续 4 例
 **安全提示**：固定 token 意味着它不再是"重启即轮换"的进程级秘密——强度完全
 取决于所选值。请只配合受信传输（`--trusted-host` / 隧道）使用。
 
+### 0005-web-401-token-input-page.patch
+
+**症状**：token 验证失败（401）时只返回一行纯文本「dsh web authentication
+required; reopen the URL printed by dsh web」——URL 一旦丢失（换设备、记不住
+token URL），除了上服务器看日志外没有任何办法进入。
+
+**修复**：`dsh-client-connection` 的 `writeUnauthorized` 改为返回极简 HTML 页：
+一个 token 输入框 + Sign in 按钮，提交后 JS 跳转 `/?token=<输入>`，走上游既有的
+token→cookie 交换（`authorizeIndex` 303 铸 cookie），不新增任何端点或校验逻辑。
+HEAD 请求仍返回无 body 的纯文本；错误 token 依然 401（重新显示表单）。
+
+**实测**（throwaway 实例）：401 页渲染表单；`/?token=<正确值>` → 303 + Set-Cookie；
+`/?token=<错误值>` → 401 + 表单；HEAD → 无 body。
+
 ## 用法
 
 ```bash
