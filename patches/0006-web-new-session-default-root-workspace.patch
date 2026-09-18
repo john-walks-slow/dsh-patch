@@ -1,0 +1,14 @@
+--- a/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
++++ b/node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js
+@@ -63,7 +63,10 @@
+ 				const current = sessions.current;
+ 				const currentWorkspaceId = current === void 0 ? void 0 : workspace.items.find((item) => item.sessionIds.includes(current))?.workspaceId;
+ 				const recent = workspace.phase === "ready" && sessions.phase === "ready" ? recentWorkspace(workspace.items, sessions.byId) : void 0;
+-				const target = workspaceId ?? currentWorkspaceId ?? recent;
++				/* deployment patch: bare New Session (sidebar button) defaults to the root
++				   workspace (path /root) instead of following the last active workspace. */
++				const rootWorkspaceId = workspace.items.find((item) => item.path === "/root")?.workspaceId;
++				const target = workspaceId ?? rootWorkspaceId ?? currentWorkspaceId ?? recent;
+ 				if (target === void 0) {
+ 					this.sessions.clear();
+ 					return;

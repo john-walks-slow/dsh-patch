@@ -115,6 +115,19 @@ HEAD 请求仍返回无 body 的纯文本；错误 token 依然 401（重新显�
 **实测**（throwaway 实例）：401 页渲染表单；`/?token=<正确值>` → 303 + Set-Cookie；
 `/?token=<错误值>` → 401 + 表单；HEAD → 无 body。
 
+### 0006-web-new-session-default-root-workspace.patch
+
+**症状**：sidebar 点「新会话」总是在上一个活跃的工作区里开新会话（跟随
+`currentWorkspaceId ?? recent`），而多数场景期望回到 root 工作区（/root）。
+
+**修复**：`dsh-client-ui-workspace` 的 `UiWorkspaceService.startSession` 在无显式
+workspaceId 时优先取 `path === "/root"` 的工作区，找不到再回退原链。各工作区行内
+自己的「新会话」按钮走显式 `startSession(workspaceId)`，不受影响；页面初始自动恢复
+上次会话的 `watchNavigation` 也不动。
+
+**实测**：重启后 GUI 点 sidebar「新会话」，新空白会话落在 root 工作区；在某项目
+工作区会话页点该工作区行内「新会话」仍落在原工作区。
+
 ## 用法
 
 ```bash
