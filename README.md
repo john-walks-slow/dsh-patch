@@ -52,7 +52,7 @@ dsh bash 工具前台启动。
 
 > 诊断文档：`dsh-im-humanize/docs/issues/260909-dsh-web-slow-listing/`。
 
-### 0003-session-log-seq-collision-guard.patch
+### ~~0003-session-log-seq-collision-guard.patch~~（已被 0.1.5 上游吸收，归档）
 
 **症状**：GUI 打开会话报「历史加载失败：corrupt session log: seq gap in committed
 region at line N (expected X, got Y)」或误导性的「corrupt Zstandard session log:
