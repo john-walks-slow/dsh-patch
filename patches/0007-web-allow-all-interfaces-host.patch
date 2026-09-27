@@ -1,0 +1,10 @@
+--- a/node_modules/@deepseek-ai/dsh-web-app/lib/startup.js
++++ b/node_modules/@deepseek-ai/dsh-web-app/lib/startup.js
+@@ -37,7 +37,6 @@
+ function apply(ctx) {
+ 	const program = webCommand();
+ 	program.action(() => {
+ 		const options = program.opts();
+-		if (options.host === "0.0.0.0") program.error("error: --host 0.0.0.0 is intentionally not supported yet for safety: it would expose remote code execution to the network; use 127.0.0.1 instead");
+ 		if (options.port !== void 0 && !/^\d+$/.test(options.port)) program.error(`error: --port must be a number, got ${JSON.stringify(options.port)}`);
+ 		ctx.provide(WEB_STARTUP_SERVICE, {

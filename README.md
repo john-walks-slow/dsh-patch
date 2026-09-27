@@ -128,6 +128,16 @@ workspaceId 时优先取 `path === "/root"` 的工作区，找不到再回退原
 **实测**：重启后 GUI 点 sidebar「新会话」，新空白会话落在 root 工作区；在某项目
 工作区会话页点该工作区行内「新会话」仍落在原工作区。
 
+### 0007-web-allow-all-interfaces-host.patch
+
+**症状**：`dsh web --host 0.0.0.0` 被硬编码拦截报错：`error: --host 0.0.0.0 is intentionally not supported yet for safety: it would expose remote code execution to the network; use 127.0.0.1 instead`，导致局域网外部设备（如手机、同一局域网电脑）无法直接通过局域网 IP 访问。
+
+**根因**：`@deepseek-ai/dsh-web-app` 的 `startup.js` 在命令行解析时无条件拦截了 `options.host === "0.0.0.0"`。实际上底层 `@deepseek-ai/dsh-host-webserver` 的配置 Schema 原生就支持 `host: '127.0.0.1' | '0.0.0.0'`，且 `resolveLanTrust` 亦内建了 `0.0.0.0` 时提取局域网网卡 IP 并追加至 `trustedHosts` 栅栏与打印 LAN URL 的逻辑。
+
+**修复**：移除 `startup.js` 中对 `options.host === "0.0.0.0"` 的报错拦截。
+
+**用法**：启动时加参数 `--host 0.0.0.0`（如 `dsh web --host 0.0.0.0 --port <PORT> --no-open`），局域网设备即可通过 `http://<LAN_IP>:<PORT>/?token=...` 直接访问。
+
 ## 用法
 
 ```bash
