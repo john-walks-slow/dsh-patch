@@ -4,7 +4,13 @@ dsh（`@deepseek-ai/dsh`）的部署补丁集。这些补丁修的是本机部�
 其根因在 dsh 上游代码里，但上游尚未修，所以以补丁形式打到已安装的 dsh 包上。
 
 > ⚠️ **升级 dsh 会覆盖这些补丁**——每次 `npm i -g @deepseek-ai/dsh`（或等价升级）后，
-> 重新跑 `./apply.sh` 即可全部重打。`apply.sh` 是幂等的（已应用会跳过，上下文不匹配会报错而非静默失败）。
+> **必须**重新跑 `./apply.sh` 全部重打。`apply.sh` 是幂等的（已应用会跳过，上下文不匹配会报错而非静默失败）。
+>
+> **血泪教训（2026-10-05）**：2026-09-28 升级到 0.1.7-rc.2 后没人重跑 `apply.sh`，
+> 而 0001 恰好因 rollup chunk 改名而 context-mismatch → **补丁静默失效一周**，
+> 期间症状就是本 README 里写的「会话列表加载不出 + 单核 100%」。现在 `apply.sh` 会
+> 自动把补丁里的 `runner-launch-<hash>.js` 重写为当前安装的 chunk 名，仅剩真正的
+> 上下文漂移才会失败。判断当前是否已全部就位：直接跑 `./apply.sh`，全是 `⊘ already applied` 即健康。
 
 ## 补丁清单
 
@@ -13,20 +19,33 @@ dsh（`@deepseek-ai/dsh`）的部署补丁集。这些补丁修的是本机部�
 **症状**：dsh web 会话列表 / 会话首次加载极慢（本地直连 session.list 也要 ~12s），
 dsh 进程空闲时仍占满 ~80% CPU。
 
-**根因**：`@deepseek-ai/dsh-subprocess-local` 的 `observeTreeExit` 里
-`while (treeAlive()) await sleepTick()`（`sleepTick` = 15ms）在主子进程 `settled`
-后，对“组长已死、孤儿仍活”的进程组（典型：从 bash 工具跑的 `pnpm preview` /
-astro 预览服务器等长驻后台命令，启动器退出后进程被 init 收养）做**永久全 /proc
-stat 扫描**——每轮同步 `readFileSync` 读 ~670 个 `/proc/<pid>/stat`、阻塞事件循环
-~470ms。进程组不消失，循环永不退出（观察者是泄漏的 async，`cleanup()` 不取消它，
-也没绑 AbortSignal）。
+**根因**：`@deepseek-ai/dsh-subprocess-local` 的 fallback owner（本机无 systemd，
+只能走 PGID 兜底路径）里 `while (alive()) await sleepTick()`（`sleepTick` = 15ms）
+在直接子进程 `settled` 后，对“组长已死、孤儿仍活”的进程组（典型：从 bash 工具
+用 `nohup ... &` 起的 dev server / tunnel / 另一个 dsh 实例）做**永久全 /proc stat
+扫描**——每轮 `readdirSync('/proc')` + 同步 `readFileSync` 读全部 `/proc/<pid>/stat`
+（本机实测 1097 个条目、1023 次读、**35.5ms**），按 15ms 排程 → 事件循环被淹没。
+进程组只要有长驻成员就永不消失，循环永不退出，`this.live` 里对应 handle 也永久滞留。
 
-**修复**：settled 后把轮询从 15ms 退避到 5s。CPU 从 ~80% 降到 ~10%，事件循环不再
-被卡。不改变正确性：组真死时仍能检测到（晚几秒）；SIGTERM→SIGKILL 的 grace-timer
-escalation 不受影响。
+**修复**（三段策略，见 2026-10-05 重推导版）：
+
+```js
+const FALLBACK_PENDING_POLL_MS = 100;    // 杀树进行中：100ms
+const FALLBACK_SETTLED_POLL_MS = 5e3;    // 直接子进程已退：只可能剩孤儿 → 5s
+const FALLBACK_WAIT_BUDGET_MS  = 6e4;    // 总预算 60s，到点放弃观察
+```
+
+CPU 从「单核 100% 永久」降到「1% 量级且 60s 内结束」。不改变正确性：普通命令
+`waitForExit` 仍 0–1ms 返回；被 kill 的树 100ms 内察觉；SIGTERM→SIGKILL 的
+grace-timer escalation 由独立定时器驱动，不受影响。取舍：预算到点后不再对残留
+守护进程补发信号（正常完成的命令本来也不会调用 `terminate()`）。
 
 **规避**：长驻后台进程（dev server / tunnel / 守护进程）用 supervisord 托管，别用
 dsh bash 工具前台启动。
+
+> 诊断全文：`docs/issues/261005-session-list-starved-by-orphan-liveness-poll/`。
+> 上游状态：0.2.0-rc.2 / 0.2.1-alpha.1 的 `runner-launch-*.js` 与出问题的 0.1.7-rc.2
+> 逐字节相同，尚未修。
 
 ### ~~0002-apiproxy-history-chunk-filter.patch~~（已被上游吸收，归档）
 
@@ -141,8 +160,11 @@ workspaceId 时优先取 `path === "/root"` 的工作区，找不到再回退原
 ## 用法
 
 ```bash
-# 重打所有补丁（升级 dsh 后必跑）
+# 重打所有补丁（升级 dsh 后必跑）。输出全是 "⊘ already applied" = 已在位。
 ./apply.sh
+
+# 不改文件，只检查：dry-run 全部补丁（rc=0 即全部已在位）
+./apply.sh --check
 
 # 验证某补丁是否已应用
 cd "$(dirname "$(readlink -f "$(command -v dsh)")")/.." && \
@@ -160,3 +182,6 @@ cd "$(dirname "$(readlink -f "$(command -v dsh)")")/.." && \
 （diff 旧备份与新文件），更新本仓库的 `.patch` 文件后再 `./apply.sh`。
 
 打补丁前请先确认 dsh 版本与补丁推导时一致；不一致时先在测试环境验证。
+
+`apply.sh` 的落盘方式不做备份，回滚单个补丁用上面的 `patch -R`（补丁都是幂等可逆的
+文本编辑，无二进制/新文件）。
